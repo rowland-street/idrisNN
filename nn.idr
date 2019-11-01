@@ -1,31 +1,6 @@
 module Main 
-
 import Data.Vect
-
---vadd : Num a => Vect n a -> Vect n a -> Vect n a
---vadd [] [] = ?vadd_rhs_3
---vadd (x :: xs) ys = ?vadd_rhs_2
-
--- data Vect : Nat -> Type -> Type where
---   Nil  : Vect Z a
---   (::) : a -> Vect k a -> Vect (S k) a
-
---infixr 7 >::
---infixr 7 ::>
-
---data Gate : Nat -> Nat -> Type where
---  Nil : Gate Z Z
---  (>::) : Int -> Gate x y -> Gate (S x) y
---  (::>) : Int -> Gate x y -> Gate x (S y)
-
---countInputs : Gate x y -> Int
---countInputs (x >:: xs) = 1 + countInputs xs
---countInputs _ = 0
-
---counts : Gate x y -> (Int, Int)
---counts Nil = (0, 0)
---counts (x >:: xs) = let (inputs, outputs) = counts xs in (1 + inputs, outputs)
---counts (x ::> xs) = let (inputs, outputs) = counts xs in  (inputs, 1 + outputs)
+import Control.Monad.State
 
 interface Add a where
   add : a -> a -> a
@@ -38,25 +13,78 @@ Mult Double where
   mult = (*)
 
 data Gate : Type -> Type where
-  Parameter : a -> Gate a
-  Vect : Vect n (Gate a) -> Gate (Vect n (Gate a))
-  (+) : Add a => Gate a  -> Gate a -> Gate a
-  (.) : (Add a, Mult a) => Gate (Vect n (Gate a)) -> Gate (Vect n (Gate a)) -> Gate a
+  Parameter : Show a => a -> Gate a
+  Vect : Show a => Vect (S n) (Gate a) -> Gate (Vect (S n) a)
+  (+) : (Show a, Add a) => Gate a  -> Gate a -> Gate a
+  (.) : (Add a, Mult a, Show a) => Gate (Vect (S n) a) -> Gate (Vect (S n) a) -> Gate a
+
+interface Show a => IEvaluated a where
+  val : a -> a
+
+Show (Gate a) where
+  show (Parameter x) = show x
+  show (a + b) = show a ++ " + " ++ (show b)
+  show (a . b) = show a ++ " . " ++ (show b)
+  show (Vect x) = "[ " ++ (show (map show x)) ++ " ]" 
 
 data Evaluated : Type -> Type where
-  EvaluatedParameter : a -> Evaluated a
-  EvaluatedVect : Vect n (Evaluated a) -> Vect n a -> Evaluated (Vect n (Evaluated a))
-  EvaluatedAdd : Add a => Evaluated a -> Evaluated a -> a ->  Evaluated a
-  EvaluatedDot : (Add a, Mult a) => Evaluated (Vect n (Evaluated a)) -> Evaluated (Vect n (Evaluated a)) -> a -> Evaluated a 
+  EvaluatedParameter : Show a => a -> Evaluated a
+  EvaluatedVect : Show a => Vect (S n) (Evaluated a) -> Vect (S n) a -> Evaluated (Vect (S n) a)
+  EvaluatedAdd : (Show a, Add a) => Evaluated a -> Evaluated a -> a ->  Evaluated a
+  EvaluatedDot : (Add a, Mult a, Show a) => Evaluated (Vect (S n1) a) -> Evaluated (Vect (S n1) a) -> a -> Evaluated a
+
+Show (Evaluated a) where
+  show (EvaluatedParameter x)  = show x
+  show (EvaluatedVect x y) = "([ " ++ (show (map show x)) ++ " ] = " ++ (show y) ++ " )"
+  show (EvaluatedAdd x y z) = "( " ++  (show x) ++ " + " ++ (show y) ++ " = " ++ (show z) ++ " )"
+  show (EvaluatedDot x y z) = "( " ++  (show x) ++ " . " ++ (show y) ++ " = " ++ (show z) ++ " )"
+
+value : Evaluated a -> a
+value (EvaluatedParameter x) = x
+value (EvaluatedVect _ ys) = ys
+value (EvaluatedAdd _ _ z) = z 
+value (EvaluatedDot _ _ w) = w
+
+aGate : Gate Double
+aGate =  (Vect [Parameter 2, (Parameter 3) + (Parameter 1)]) . (Vect [Parameter 4, Parameter 5])
+
+dotProduct : (Add a, Mult a) => Vect (S n) a -> Vect (S n) a -> a
+dotProduct x y = foldl1 add $ zipWith mult x y
+
+evaluate : Gate a -> Evaluated a
+evaluate (Parameter x) = EvaluatedParameter x
+evaluate (Vect xs) = EvaluatedVect children v
+  where
+    children = map evaluate xs
+    v = map value children    
+evaluate (x + y) = EvaluatedAdd evaluatedX evaluatedY (add (value evaluatedX) (value evaluatedY))
+  where
+    evaluatedX = evaluate x 
+    evaluatedY = evaluate y
+evaluate (x . y) = EvaluatedDot (evaluate x) (evaluate y) $ dotProduct (value (evaluate x)) (value (evaluate y))
+
+run : MonadState Int m => Int -> m ()
+run x = do
+  modify (+x)
+  
+
+main : IO ()
+main = do
+  putStrLn $ show aGate
+  putStrLn "->"
+  putStrLn $ show $ evaluate aGate
 
 evaluated : Evaluated Double
 evaluated = EvaluatedAdd (EvaluatedParameter 1) (EvaluatedParameter 2) 3 
 
-x : Evaluated (Vect 2 (Evaluated Double))
+x : Evaluated (Vect 2 Double)
 x = EvaluatedVect [EvaluatedParameter 1, EvaluatedParameter 2] [1,2]
 
+y : Evaluated (Vect 2 Double)
+y = EvaluatedVect [EvaluatedAdd (EvaluatedParameter 2) (EvaluatedParameter 0) 2, EvaluatedParameter 2] [2, 2]
+
 anotherEvaluated : Evaluated Double
-anotherEvaluated = EvaluatedDot x (EvaluatedVect [EvaluatedAdd (EvaluatedParameter 2) (EvaluatedParameter 0) 2, EvaluatedParameter 2] [2, 2]) 6
+anotherEvaluated = EvaluatedDot x y 6
 
 input1 : Gate Double
 input1 = Parameter 1
@@ -69,6 +97,10 @@ input3 = Parameter 3
 
 sum : Gate Double
 sum = input1 + (input2 + input3)
+
+
+v : Gate (Vect 2 Double)
+v = Vect [Parameter 1, Parameter 2]
 
 dot : Gate Double
 dot = Vect [Parameter 1, Parameter 2, Parameter 3] . Vect [Parameter 2, Parameter 3, Parameter 4] 
